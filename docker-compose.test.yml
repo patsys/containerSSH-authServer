@@ -1,0 +1,119 @@
+version: '3'
+services:
+  openssl:
+    image: patsys/openssl
+    environment:
+      SCRIPT: |
+        #!/bin/sh
+        set -o pipefail
+        set -ex
+        # Servercert
+        cd Server
+        openssl req -nodes -newkey rsa:4096 -keyform PEM -keyout ca.key -x509 -days 3650 -outform PEM -out ca.crt -subj "/C=DE/ST=OverTheAir/L=Springfield/O=Dreams/CN=CAServer"
+        openssl genrsa -out server_key.pem 4096
+        openssl req  -new -key server_key.pem -out server.req -subj  "/C=DE/ST=OverTheAir/L=Springfield/O=Dreams/CN=authserver"
+        openssl x509 -req -in server.req -CA ca.crt -CAkey ca.key -set_serial 100 -extensions server -days 1460 -outform PEM -out server_cert.pem
+        # Clientcert 1
+        cd /Cert1
+        openssl req -nodes -newkey rsa:4096 -keyform PEM -keyout ca.key -x509 -days 3650 -outform PEM -out ca.crt  -subj "/C=DE/ST=OverTheAir/L=Springfield/O=Dreams/CN=CACart1"
+        openssl genrsa -out client.key 4096
+        openssl req -new -key client.key -out client.req -subj "/C=DE/ST=OverTheAir/L=Springfield/O=Dreams/CN=ClientCart1"
+        openssl x509 -req -in client.req -CA ca.crt -CAkey ca.key -set_serial 101 -extensions client -days 365 -outform PEM -out client.crt
+        # Clientcert 2
+        cd /Cert2
+        openssl req -nodes -newkey rsa:4096 -keyform PEM -keyout ca.key -x509 -days 3650 -outform PEM -out ca.crt  -subj "/C=DE/ST=OverTheAir/L=Springfield/O=Dreams/CN=CACart2"
+        openssl genrsa -out client.key 4096
+        openssl req -new -key client.key -out client.req -subj "/C=DE/ST=OverTheAir/L=Springfield/O=Dreams/CN=ClientCart2"
+        openssl x509 -req -in client.req -CA ca.crt -CAkey ca.key -set_serial 101 -extensions client -days 365 -outform PEM -out client.crt
+        # Clientcert 3
+        cd /Cert3
+        openssl req -nodes -newkey rsa:4096 -keyform PEM -keyout ca.key -x509 -days 3650 -outform PEM -out ca.crt  -subj "/C=DE/ST=OverTheAir/L=Springfield/O=Dreams/CN=CACart2"
+        openssl genrsa -out client.key 4096
+        openssl req -new -key client.key -out client.req -subj "/C=DE/ST=OverTheAir/L=Springfield/O=Dreams/CN=ClientCart2"
+        openssl x509 -req -in client.req -CA ca.crt -CAkey ca.key -set_serial 101 -extensions client -days 365 -outform PEM -out client.crt
+    volumes:
+    - Cert1:/Cert1
+    - Cert2:/Cert2
+    - Cert3:/Cert3
+    - Servercert:/Server
+  authserver:
+    image: $IMAGEPREFIX$AUTHSERVER_IMAGE_NAME$DOCKER_TAG
+    environment:
+      PRE_SCRIPT: |
+        #!/bin/sh
+        for i in `seq 10` ; do
+          if [ `ls /example/server | wc -w` -ge 2 ]; then
+            break
+          fi
+          sleep 1
+        done
+        i=1
+        for i in `seq 10` ; do
+          if [ `ls /example/clientCert1 | wc -w` -ge 4 ]; then
+            break
+          fi
+          sleep 1
+        done
+        i=1
+        for i in `seq 10` ; do
+          if [ `ls /example/clientCert2 | wc -w` -ge 4 ]; then
+            break
+          fi
+          sleep 1
+        done
+        sed 's|example/|/example/|g' /example/config.yml >/tmp/config.yml
+    command: ["-config","/tmp/config.yml"]
+    depends_on:
+    - openssl
+    volumes:
+    - ./example:/example
+    - Cert1:/example/clientCert1
+    - Cert2:/example/clientCert2
+    - Servercert:/example/server
+  sut:
+    image: patsys/curl
+    command:
+    - /bin/sh
+    - -c
+    - |
+        i=1
+        for i in `seq 30` ; do
+          curl --cacert /example/server/ca.crt -LI https://authserver:8081/noexist
+          ret=`curl --cacert /example/server/ca.crt -LI https://authserver:8081/noexist -o /dev/null -w '%{http_code}\n' -s`
+          if [ "$ret" -eq 404 ] || [ "$ret" -eq 401 ]; then 
+            break
+          fi
+          sleep 1
+        done
+        set -ex
+        set -o pipefail
+        curl -f --cacert /example/server/ca.crt https://authserver:8081 && exit 1 || echo failed correct
+        curl -f --cacert /example/server/ca.crt https://authserver:8081/password && exit 1 || echo failed correct
+        curl -f --cacert /example/server/ca.crt https://authserver:8081/pubkey && exit 1 || echo failed correct
+        curl --key /example/clientCert1/client.key --cert /example/clientCert1/client.crt  --cacert /example/server/ca.crt -d '{"username":"user1","passwordBase64":"dGVzdA==", "remoteAddress": "1.1.1.1"}' https://authserver:8081/password | grep -q "true"
+        curl -f --key /example/clientCert1/client.key --cert /example/clientCert1/client.crt  --cacert /example/server/ca.crt -d '{"username":"user1","passwordBase64":"dGVzdA==", "remoteAddress": "10.5.4.12"}' https://authserver:8081/password | grep -q "true"
+        curl -f --key /example/clientCert2/client.key --cert /example/clientCert2/client.crt  --cacert /example/server/ca.crt -d '{"username":"user1","passwordBase64":"dGVzdA==", "remoteAddress": "10.5.5.230"}' https://authserver:8081/password | grep -q "true"
+        curl -f --key /example/clientCert3/client.key --cert /example/clientCert3/client.crt  --cacert /example/server/ca.crt -d '{"username":"user1","passwordBase64":"dGVzdA==", "remoteAddress": "10.5.5.230"}' https://authserver:8081/password && exit 1 || echo failed correct
+        curl -f --key /example/clientCert1/client.key --cert /example/clientCert1/client.crt  --cacert /example/server/ca.crt -d '{"username":"user1","publicKey":"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDOVMeay/FQYUb1CcqY9ArlKWiqGA8ELCSY5YWFPZxvB0JADNzymTn8qkzOl8vL4zFmWhT7hanC+tAkk9FukJOs0SFwgIRhQCmNcF05xtWmamCiOoKacKSHk+0vz7jggGINrPd2wqM6+OJX9k0onXI7U19XWyIVSQvN6BB8o/VV1W0FJi8PkqE/6G3JjwYfqKLAaY+yHURZHtqjUL2hRh7cS9ccpNsXJgjc6YLxq2U1SroMZtsHRuzRJs6vSTd1MFz0jKleXlgsLWDVJN94a+yrIcIowvK0dn7bNUHS7sDFeS5TAj42xW4rjyWJQJ8JyHRK2rklUyuE04sr0cIKI0vQzx25olmIJ8JQwVf21kt0kQQPvoSHm+Jdd14Y6cnLCEYD8PLKnv0COyd4Gl5uY42krWJFAOVROEheJTWyFk3a0ptIxbWpDrRQp1g/hApdYIe2WQYdstd/WfucJFzqGaqpKqvWGJ6R8iu08v63c3orIHESP+qCCP/Zuipl4lLtV10=", "remoteAddress": "10.5.5.230"}' https://authserver:8081/pubkey | grep -q "true"
+        curl -f --key /example/clientCert1/client.key --cert /example/clientCert1/client.crt  --cacert /example/server/ca.crt -d '{"username":"user1","publicKey":"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC/TNO7s+Cy3swGSyuwFK0qYw37e7gtNSCGRIC2E3I0l271DfrwbRrNwQPRoT3p7xzDS0tT09ZD6Qch8vJthQw69MgsIr0cczjy8uJCNVeBrwefmHAPzObPZ4wYeEGphouhtJQLkWSeUoVcZaN2Gc9Q3AKS+CYMkjIA2ED0C+oJno2tpOIMEloNaLIbbReK3E+drqcgpti8vRaEDhn0gqBXYZkbPgwrW8WLsffTcdb3CwOD/Ria3ey0+m32ru0NseTBF4OuFa+ht2x5tCL8goICTl0L+ysEi5wXOkprAkSvFKe9Z18ibn+q4E4yx6x6yu2SomkSmLJAg5/9VsvDRSghPdWGuVlEygBTn5pyHw1nr6liblO4iHiGFFgogrAF7xQt0a5W3/NtIgMrq7MEsMqntoopwNbNcCD0/HdGN9tMnk/dtrs6Hbo1T5jAbc6dUBDgKr7FnyeQwPq3LeDkJ8WdzVY3kanvcgkz2xjAdrR2bv72P0HpmLxIVrcgqI9l3ds=", "remoteAddress": "10.5.5.230"}' https://authserver:8081/pubkey | grep -q "true"
+        curl -f --key /example/clientCert1/client.key --cert /example/clientCert1/client.crt  --cacert /example/server/ca.crt -d '{"username":"user1","publicKey":"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDOVMeay/FQYUb1CcqY9ArlKWiqGA8ELCSY5YWFPZxvB0JADNzymTn8qkzOl8vL4zFmWhT7hanC+tAkk9FukJOs0SFwgIRhQCmNcF05xtWmamCiOoKacKSHk+0vz7jggGINrPd2wqM6+OJX9k0onXI7U19XWyIVSQvN6BB8o/VV1W0FJi8PkqE/6G3JjwYfqKLAaY+yHURZHtqjUL2hRh7cS9ccpNsXJgjc6YLxq2U1SroMZtsHRuzRJs6vSTd1MFz0jKleXlgsLWDVJN94a+yrIcIowvK0dn7bNUHS7sDFeS5TAj42xW4rjyWJQJ8JyHRK2rklUyuE04sr0cIKI0vQzx25olmIJ8JQwVf21kt0kQQPvoSHm+Jdd14Y6cnLCEYD8PLKnv0COyd4Gl5uY42krWJFAOVROEheJTWyFk3a0ptIxbWpDrRQp1g/hApdYIe2WQYdstd/WfucJFzqGaqpKqvWGJ6R8iu08v63c3orIHESP+qCCP/Zuipl4lLtV10=", "remoteAddress": "10.7.5.230"}' https://authserver:8081/pubkey | grep -q "false"
+        curl -f --key /example/clientCert1/client.key --cert /example/clientCert1/client.crt  --cacert /example/server/ca.crt -d '{"username":"user1","publicKey":"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDUnNNNiq4hSE00JcTNNOIyE/WdX6lt+e1HtlMzWPo34FmXgC1UFUWY0B3rMcA7DK8RPwswFC8woVPA2VQvrGyDhVEry0yZh5vQNhX9FpIQj7jQsW0aj+g50X2IowLrattvvX8RVXeJg/SkmlieMEn00iFgOnfxv5F3k7EejB90nZP81Z/ODZgZh6FwUgQyXI5JgwKakzDf4xWY86rfG1UI9VDp9mbCiQnw6kCM03sb33mtrQ3xs474uFvHh0TQgnYB7EIuAmyBW68ak+DqzVH6ftou08MkjvtAGZgVoGeSpQy3Srtjx3D9/akXSZbWtSABpY5ZLf0TlC3/2qsVt8Q56TG0oRJvfnzccE199OQCZMoksJbkr2kVJeXDMzLNG8oLjVZqzlsJRs8L4aX5UZCW+GaWsCdDZSNmvOcQ4ECKhJZIbTE4/tSTFdUn/G8rOIIKKO/aRRE5bm2hd4BWs00viUCzSzvKKs/gLCuCY2qn1SkyM4LTeg7Iog9+F6oslMc=", "remoteAddress": "10.5.5.230"}' https://authserver:8081/pubkey | grep -q "false"
+        [ `curl --cacert /example/server/ca.crt -L https://authserver:8081/password -d '{"username":"user1","passwordBase64":"dGVzdA==", "remoteAddress": "10.5.4.12"}' -o /dev/null -w '%{http_code}\n' -s` -eq 401 ]
+        [ `curl --cacert /example/server/ca.crt -L https://authserver:8081/pubkey -d '{"username":"user1","publicKey":"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDOVMeay/FQYUb1CcqY9ArlKWiqGA8ELCSY5YWFPZxvB0JADNzymTn8qkzOl8vL4zFmWhT7hanC+tAkk9FukJOs0SFwgIRhQCmNcF05xtWmamCiOoKacKSHk+0vz7jggGINrPd2wqM6+OJX9k0onXI7U19XWyIVSQvN6BB8o/VV1W0FJi8PkqE/6G3JjwYfqKLAaY+yHURZHtqjUL2hRh7cS9ccpNsXJgjc6YLxq2U1SroMZtsHRuzRJs6vSTd1MFz0jKleXlgsLWDVJN94a+yrIcIowvK0dn7bNUHS7sDFeS5TAj42xW4rjyWJQJ8JyHRK2rklUyuE04sr0cIKI0vQzx25olmIJ8JQwVf21kt0kQQPvoSHm+Jdd14Y6cnLCEYD8PLKnv0COyd4Gl5uY42krWJFAOVROEheJTWyFk3a0ptIxbWpDrRQp1g/hApdYIe2WQYdstd/WfucJFzqGaqpKqvWGJ6R8iu08v63c3orIHESP+qCCP/Zuipl4lLtV10=", "remoteAddress": "10.5.4.12"}' -o /dev/null -w '%{http_code}\n' -s` -eq 401 ]
+        curl -f --key /example/clientCert1/client.key --cert /example/clientCert1/client.crt  --cacert /example/server/ca.crt -d '{"username":"user1","passwordBase64":"dGVzdA==", "remoteAddress": "10.6.4.12"}' https://authserver:8081/password | grep -q "false"
+        curl -f --key /example/clientCert1/client.key --cert /example/clientCert1/client.crt  --cacert /example/server/ca.crt -d '{"username":"user1","passwordBase64":"dGVzdDE=", "remoteAddress": "10.5.4.12"}' https://authserver:8081/password | grep -q "false"
+    volumes:
+    - Cert1:/example/clientCert1
+    - Cert2:/example/clientCert2
+    - Cert3:/example/clientCert3
+    - Servercert:/example/server
+    links:
+    - authserver
+    depends_on:
+    - openssl
+    - authserver
+volumes:
+  Cert1: {}
+  Cert2: {}
+  Cert3: {}
+  Servercert: {}
