@@ -6,7 +6,7 @@ services:
       SCRIPT: |
         #!/bin/sh
         set -o pipefail
-        set -ex
+        set -e
         # Servercert
         cd Server
         if [ ! -f ca.crt ] || [ ! -f server_cert.pem ] | [ ! -f server_key.pem ]; then
@@ -87,7 +87,6 @@ services:
     - |
         apk add curl 
         i=1
-        set -x
         for i in `seq 30` ; do
           ret=`curl --tlsv1.2 --cacert /example/server/ca.crt --cert /example/clientCert1/client.crt --key /example/clientCert1/client.key -LI https://authserver:8081/noexist -o /dev/null -w '%{http_code}\n' -s`
           if [ "$$ret" -eq 404 ] || [ "$$ret" -eq 401 ]; then 
@@ -95,7 +94,7 @@ services:
           fi
           sleep 1
         done
-        set -ex
+        set -e
         set -o pipefail
         curl -f --cacert /example/server/ca.crt https://authserver:8081 && exit 1 || echo failed correct
         curl -f --cacert /example/server/ca.crt https://authserver:8081/password && exit 1 || echo failed correct
