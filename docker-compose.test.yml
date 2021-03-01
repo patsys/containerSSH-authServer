@@ -13,7 +13,7 @@ services:
         export gid=1001
         addgroup -g $$gid $$group && adduser -D -u $$uid  $$user -G $$group
         # Servercert
-        cd Server
+        cd /certs/Server
         if [ ! -f ca.crt ] || [ ! -f server_cert.pem ] | [ ! -f server_key.pem ]; then
           openssl req -nodes -newkey rsa:4096 -keyform PEM -keyout ca.key -x509 -days 3650 -outform PEM -out ca.crt -subj "/C=DE/ST=OverTheAir/L=Springfield/O=Dreams/CN=CAServer"
           openssl genrsa -out server_key.pem 4096
@@ -22,7 +22,7 @@ services:
           openssl x509 -req -in server.req -CA ca.crt -CAkey ca.key -set_serial 100 -extensions server -extensions SAN -days 1460 -outform PEM -out server_cert.pem -extfile /tmp/openssl.cnf
         fi
         # Clientcert 1
-        cd /Cert1
+        cd /certs/Cert1
         if [ ! -f ca.crt ]; then
           openssl req -nodes -newkey rsa:4096 -keyform PEM -keyout ca.key -x509 -days 3650 -outform PEM -out ca.crt  -subj "/C=DE/ST=OverTheAir/L=Springfield/O=Dreams/CN=CACart1"
           openssl genrsa -out client.key 4096
@@ -30,27 +30,19 @@ services:
           openssl x509 -req -in client.req -CA ca.crt -CAkey ca.key -set_serial 101 -extensions client -days 365 -outform PEM -out client.crt
         fi
         # Clientcert 2
-        cd /Cert2
+        cd /certs/Cert2
         if [ ! -f ca.crt ]; then
           openssl req -nodes -newkey rsa:4096 -keyform PEM -keyout ca.key -x509 -days 3650 -outform PEM -out ca.crt  -subj "/C=DE/ST=OverTheAir/L=Springfield/O=Dreams/CN=CACart2"
           openssl genrsa -out client.key 4096
           openssl req -new -key client.key -out client.req -subj "/C=DE/ST=OverTheAir/L=Springfield/O=Dreams/CN=ClientCart2"
           openssl x509 -req -in client.req -CA ca.crt -CAkey ca.key -set_serial 101 -extensions client -days 365 -outform PEM -out client.crt
         fi
-        # Clientcert 3
-        cd /Cert3
-        if [ ! -f ca.crt ]; then
-          openssl req -nodes -newkey rsa:4096 -keyform PEM -keyout ca.key -x509 -days 3650 -outform PEM -out ca.crt  -subj "/C=DE/ST=OverTheAir/L=Springfield/O=Dreams/CN=CACart2"
-          openssl genrsa -out client.key 4096
-          openssl req -new -key client.key -out client.req -subj "/C=DE/ST=OverTheAir/L=Springfield/O=Dreams/CN=ClientCart2"
-          openssl x509 -req -in client.req -CA ca.crt -CAkey ca.key -set_serial 101 -extensions client -days 365 -outform PEM -out client.crt
-        fi
-        chown -R $$uid:$$gid .
+        chown -R $$uid:$$gid /certs/
     volumes:
-    - Cert1:/Cert1
-    - Cert2:/Cert2
-    - Cert3:/Cert3
-    - Servercert:/Server
+    - Cert1:/certs/Cert1
+    - Cert2:/certs/Cert2
+    - Cert3:/certs/Cert3
+    - Servercert:/certs/Server
   authserver:
     image: $IMAGEPREFIX$AUTHSERVER_IMAGE_NAME$DOCKER_TAG
     environment:
@@ -69,13 +61,7 @@ services:
           fi
           sleep 1
         done
-        i=1
-        for i in `seq 10` ; do
-          if [ `ls /example/clientCert2 | wc -w` -ge 4 ]; then
-            break
-          fi
-          sleep 1
-        done
+        ls -Rl /example/
         sed 's|example/|/example/|g' /example/config.yml >/tmp/config.yml
     command: ["-config","/tmp/config.yml"]
     depends_on:
