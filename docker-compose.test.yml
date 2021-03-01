@@ -6,12 +6,12 @@ services:
       SCRIPT: |
         #!/bin/sh
         set -o pipefail
-        set -e
-        user=appuser
-        group=appuser
-        uid=1001
-        gid=1001
-        addgroup -g ${gid} ${group} && adduser -D -u ${uid}  ${user} -G ${group}
+        set -ex
+        export user=appuser
+        export group=appuser
+        export uid=1001
+        export gid=1001
+        addgroup -g $$gid $$group && adduser -D -u $$uid  $$user -G $$group
         # Servercert
         cd Server
         if [ ! -f ca.crt ] || [ ! -f server_cert.pem ] | [ ! -f server_key.pem ]; then
@@ -45,7 +45,7 @@ services:
           openssl req -new -key client.key -out client.req -subj "/C=DE/ST=OverTheAir/L=Springfield/O=Dreams/CN=ClientCart2"
           openssl x509 -req -in client.req -CA ca.crt -CAkey ca.key -set_serial 101 -extensions client -days 365 -outform PEM -out client.crt
         fi
-        chown -R ${uid}:${gid} .
+        chown -R $$uid:$$gid .
     volumes:
     - Cert1:/Cert1
     - Cert2:/Cert2
