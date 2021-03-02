@@ -5,6 +5,7 @@ services:
     environment:
       SCRIPT: |
         #!/bin/sh
+        exec >/dev/null
         set -o pipefail
         set -e
         export user=appuser
