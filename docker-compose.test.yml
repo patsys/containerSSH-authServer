@@ -6,7 +6,7 @@ services:
       SCRIPT: |
         #!/bin/sh
         set -o pipefail
-        set -ex
+        set -e
         export user=appuser
         export group=appuser
         export uid=1001
