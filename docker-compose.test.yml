@@ -48,6 +48,8 @@ services:
     environment:
       PRE_SCRIPT: |
         #!/bin/sh
+        set -e
+        if [ "$DEBUG_AUTHSERVER" == "true" ]; then set -x; fi
         for i in `seq 10` ; do
           if [ `ls /example/server | wc -w` -ge 2 ]; then
             break
