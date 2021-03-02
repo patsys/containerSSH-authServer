@@ -60,13 +60,7 @@ services:
           fi
           sleep 1
         done
-        i=1
-        for i in `seq 10` ; do
-          if [ `ls /example/clientCert2 | wc -w` -ge 4 ]; then
-            break
-          fi
-          sleep 1
-        done
+        ls -Rl /example/
         sed 's|example/|/example/|g' /example/config.yml >/tmp/config.yml
     command: ["-config","/tmp/config.yml"]
     depends_on:
