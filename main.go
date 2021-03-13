@@ -15,8 +15,12 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"net"
-//	"context"
-	"io"
+	"context"
+	"os/signal"
+	"syscall"
+	"time"
+	"fmt"
+	"bytes"
 )
 
 
@@ -25,6 +29,7 @@ type Config struct {
 	Users map[string]User `json:"users"`
 	Server http.ServerConfiguration `json:"server"`
 	Log log.Config `json:"log"`
+	Auth Auth  `json:"auth"`
 }
 
 type User struct {
@@ -34,20 +39,11 @@ type User struct {
 	Groups		[]string `json:groups`
 }
 
-type sureFireWriter struct {
-	backend io.Writer
+type Auth struct {
+	Secret		string `json:"secret"`
 }
 
 type myHandler struct {
-}
-
-func (s *sureFireWriter) Write(p []byte) (n int, err error) {
-	n, err = s.backend.Write(p)
-	if err != nil {
-		// Ignore errors
-		return len(p), nil
-	}
-	return n, nil
 }
 
 func (h *myHandler) OnPassword(
@@ -56,30 +52,75 @@ func (h *myHandler) OnPassword(
     RemoteAddress string,
     ConnectionID string,
 ) (bool, error) {
-	logger.Debugf("Password Username %s, Address: %s, ConnectionID: %s Password: %s", Username, RemoteAddress, ConnectionID, string(Password))
+	logger.Debug(
+		log.Wrap(
+			nil,
+			"PwdAuth",
+			"User Auth",
+		).Label("Username", Username).
+		Label("RemoteAddress", RemoteAddress).
+		Label("ConnectionID", ConnectionID),
+	)
 	user, ok := cfg.Users[Username]
 	if !ok {
-		logger.Errorf("Audit(password): Username %s, Address: %s, CennectionID: %s", Username, RemoteAddress, ConnectionID)
-		logger.Debugf("Password Username(%s) not exist", Username)
+		logger.Debug(
+			log.Wrap(
+				nil,
+				"UserNotFound",
+				"User not found",
+			).Label("Audit", "password").
+			Label("Username", Username).
+			Label("RemoteAddress", RemoteAddress).
+			Label("ConnectionID", ConnectionID),
+		)
 		return false, nil // Username not existst 
 	}
 
-	hashSum := sha512.Sum512(Password)
+	salted :=[][]byte{ []byte(Username), []byte(cfg.Auth.Secret), Password }
+	hashSum := sha512.Sum512(bytes.Join(salted,[]byte{}))
 	passwordSHA := hex.EncodeToString(hashSum[:])
 	if passwordSHA !=  user.Password {
-		logger.Errorf("Audit(password): Username %s, Address: %s, CennectionID: %s", Username, RemoteAddress, ConnectionID)
-		logger.Debugf("Password Password(%s) wrong", passwordSHA)
+		logger.Debug(
+			log.Wrap(
+				nil,
+				"PasswordNotCorrect",
+				"Password not conrrect",
+			).Label("Audit", "password").
+			Label("Username", Username).
+			Label("Password", passwordSHA).
+			Label("RemoteAddress", RemoteAddress).
+			Label("ConnectionID", ConnectionID),
+		)
 		return false, nil // Password not correct
 	} else {
 		if checkIp(RemoteAddress, user.Ips){
 			return true, nil // all passed
 		}else{
-			logger.Errorf("Audit(password): Username %s, Address: %s, CennectionID: %s", Username, RemoteAddress, ConnectionID)
-			logger.Debugf("Password IP(%s) not allowed", RemoteAddress)
+			logger.Debug(
+				log.Wrap(
+					nil,
+					"IPNotCorrect",
+					"IP not conrrect",
+				).Label("Audit", "password").
+				Label("Username", Username).
+				Label("Password", passwordSHA).
+				Label("RemoteAddress", RemoteAddress).
+				Label("ConnectionID", ConnectionID),
+			)
 			return false, nil // Ip not allowed
 		}
 	}
-	logger.Errorf("Audit(password): Username %s, Address: %s, CennectionID: %s", Username, RemoteAddress, ConnectionID)
+	logger.Debug(
+		log.Wrap(
+			nil,
+			"NoReturn",
+			"No value returned",
+		).Label("Audit", "password").
+		Label("Username", Username).
+		Label("Password", passwordSHA).
+		Label("RemoteAddress", RemoteAddress).
+		Label("ConnectionID", ConnectionID),
+	)
 	return false, nil
 }
 
@@ -92,8 +133,16 @@ func (h *myHandler) OnPubKey(
 	logger.Debugf("Pubkey Username %s, Address: %s, ConnectionID: %s Pubkey: %s", Username, RemoteAddress, ConnectionID, PublicKey)
 	user, ok := cfg.Users[Username]
 	if !ok {
-		logger.Errorf("Audit(pubKey): Username %s, Address: %s, CennectionID: %s", Username, RemoteAddress, ConnectionID)
-		logger.Debugf("Pubkey Username(%s) not exist", Username)
+		logger.Debug(
+			log.Wrap(
+				nil,
+				"UserNotFound",
+				"User not found",
+			).Label("Audit", "pubKey").
+			Label("Username", Username).
+			Label("RemoteAddress", RemoteAddress).
+			Label("ConnectionID", ConnectionID),
+		)
 		return false, nil // Uesr not exist
 	}
 	for _, pubKey := range user.PublicKeys {
@@ -101,14 +150,30 @@ func (h *myHandler) OnPubKey(
 			if checkIp(RemoteAddress, user.Ips){
 				return true, nil // all passed
 			} else{
-				logger.Errorf("Audit: Username %s, Address: %s", Username, RemoteAddress)
-				logger.Debugf("Pubkey IP(%s) not allowed", RemoteAddress)
+				logger.Debug(
+					log.Wrap(
+						nil,
+						"IPNotCorrect",
+						"IP not conrrect",
+					).Label("Audit", "pubKey").
+					Label("Username", Username).
+					Label("RemoteAddress", RemoteAddress).
+					Label("ConnectionID", ConnectionID),
+				)
 				return false, nil // Ip not allowed 
 			}
 		}
 	}
-	logger.Errorf("Audit: Username %s, Address: %s", Username, RemoteAddress)
-	logger.Debugf("Pubkey Key(%s) not exist", PublicKey)
+	logger.Debug(
+		log.Wrap(
+			nil,
+			"KeyNotCorrect",
+			"Key not conrrect",
+		).Label("Audit", "pubKey").
+		Label("Username", Username).
+		Label("RemoteAddress", RemoteAddress).
+		Label("ConnectionID", ConnectionID),
+	)
 	return false, nil // Default response
 }
 
@@ -132,25 +197,52 @@ func checkIp(remoteIp string, ips []string) bool {
 	return false
 }
 
-func runServer(lifecycle service.Lifecycle){
-	if err := lifecycle.Run(); err != nil {
-		panic(err)
-		logger.Errorf("Server stoppt: %v", err)
-	}
-}
-
 func main() {
-  server, err := auth.NewServer(
-      cfg.Server,
-      &myHandler{},
-      logger,
-  )
-  if err != nil {
-	  logger.Errorf("Server error: %v", err)
-	  os.Exit(-1)
-  }
-   lifecycle := service.NewLifecycle(server)
-   runServer(lifecycle)
+	server, err := auth.NewServer(
+		cfg.Server,
+		&myHandler{},
+		logger,
+	)
+	if err != nil {
+		logger.Errorf("Server error: %v", err)
+		os.Exit(-1)
+	}
+
+	lifecycle := service.NewLifecycle(server)
+
+	go func() {
+		_ = lifecycle.Run()
+	}()
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		if _, ok := <-signals; ok {
+			// ok means the channel wasn't closed, let's trigger a shutdown.
+			stopContext, _ := context.WithTimeout(
+				context.Background(),
+				20 * time.Second,
+			)
+			lifecycle.Stop(stopContext)
+		}
+	}()
+	// Wait for the service to terminate.
+	err = lifecycle.Wait()
+	// We are already shutting down, ignore further signals
+	signal.Ignore(syscall.SIGINT, syscall.SIGTERM)
+	// close signals channel so the signal handler gets terminated
+	close(signals)
+
+	if err != nil {
+	    // Exit with a non-zero signal
+	    fmt.Fprintf(
+	        os.Stderr,
+	        "an error happened while running the server (%v)",
+	        err,
+	    )
+	    os.Exit(1)
+	}
+	os.Exit(0)
 
   // When done, shut down server with an optional context for the shutdown deadline
   //  lifecycle.Stop(context.Background())
@@ -186,7 +278,7 @@ func init() {
 	structutils.Defaults(&cfg.Server)
 	structutils.Defaults(&cfg.Log)
 
-	loggerLocal, err :=  log.NewFactory(&sureFireWriter{os.Stdout}).Make(cfg.Log, "")
+	loggerLocal, err :=  log.NewLogger(cfg.Log)
 	if err != nil {
 		panic(err)
 	}
@@ -201,11 +293,24 @@ func init() {
 			if filepath.Ext(info.Name()) == ".yml" {
 				yamlFile, err := ioutil.ReadFile(configFlag)
 				if err != nil {
-					logger.Errorf("Cannot get config file %s Get err   #%v ", path, err)
+					logger.Error(
+						log.Wrap(
+							err,
+							"UserfileReadError",
+							"Config file can not read",
+						).Label("File", path),
+					)
 					return err
 				}
 				err = yaml.Unmarshal(yamlFile, &user)
 				if err != nil {
+					logger.Error(
+						log.Wrap(
+							err,
+							"UserfileParseError",
+							"Config file can not parse",
+						).Label("File", path),
+					)
 					logger.Errorf("Config parse error: %s", err)
 					return err
 				}
